@@ -37,8 +37,8 @@
 #import <IOKit/hid/IOHIDManager.h>
 #endif
 #include "hid_imu.h"
-#if __has_include("dualsense_rumble.h")
-#include "dualsense_rumble.h"   /* this game's runtime carries the DualSense audio haptics route */
+#if DS_RUMBLE
+#include "dualsense_rumble.h"   /* this build links the DualSense audio haptics route */
 #else
 /* A game without the route: the same calls, doing nothing, so this shared file builds everywhere. */
 static bool ds_rumble_on(void) { return false; }

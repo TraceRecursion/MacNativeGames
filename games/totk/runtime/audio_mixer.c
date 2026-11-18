@@ -312,6 +312,15 @@ static void output_open(Mixer *m, int rate) {
         };
         m->channels = 2;
         err = AudioUnitSetProperty(m->unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &f2, sizeof f2);
+        /* Say the stream is stereo: without it a device whose own layout has more channels (the DualSense's
+           USB endpoint, four, the rear pair driving the grips' haptics) gets the picture upmixed into every
+           channel and the controller buzzes with the game's music. */
+        if (!err) {
+            AudioChannelLayout layout = {0};
+            layout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo;
+            (void)AudioUnitSetProperty(m->unit, kAudioUnitProperty_AudioChannelLayout, kAudioUnitScope_Input, 0,
+                                       &layout, sizeof layout);
+        }
         if (!err) err = AudioUnitSetProperty(m->unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &cb, sizeof cb);
         if (!err) err = AudioUnitInitialize(m->unit);
         if (!err) err = AudioOutputUnitStart(m->unit);
