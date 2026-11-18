@@ -37,6 +37,18 @@
 #import <IOKit/hid/IOHIDManager.h>
 #endif
 #include "hid_imu.h"
+#if __has_include("dualsense_rumble.h")
+#include "dualsense_rumble.h"   /* this game's runtime carries the DualSense audio haptics route */
+#else
+/* A game without the route: the same calls, doing nothing, so this shared file builds everywhere. */
+static bool ds_rumble_on(void) { return false; }
+static void ds_rumble_set(unsigned side, float al, float fl, float ah, float fh, float gain) {
+    (void)side; (void)al; (void)fl; (void)ah; (void)fh; (void)gain;
+}
+static void ds_rumble_tick(void) {}
+static bool ds_rumble_active(void) { return false; }
+static void ds_rumble_quiet(void) {}
+#endif
 
 /* ---- rumble ----
    Simple pattern players (CHHapticPatternPlayer) only: on macOS 26.5.2 (25F84) the advanced player (looping) never gets
@@ -71,6 +83,7 @@ void runtime_rumble_set(unsigned side, float al, float fl, float ah, float fh) {
     want[side][0] = al; want[side][1] = fl; want[side][2] = ah; want[side][3] = fh; wantAt[side] = runtime_now_ns(); wantCount++;
     float a = al > ah ? al : ah; if (a > strongest) strongest = a;
     pthread_mutex_unlock(&wantLock);
+    if (ds_rumble_on()) ds_rumble_set(side, al, fl, ah, fh, atomic_load(&gain));
     if (a > 0.02f && rumbleQueue && atomic_load_explicit(&rumbleSlow, memory_order_relaxed)) {
         atomic_store_explicit(&rumbleSlow, 0, memory_order_relaxed);
         dispatch_async(rumbleQueue, ^{
@@ -80,6 +93,7 @@ void runtime_rumble_set(unsigned side, float al, float fl, float ah, float fh) {
 }
 void runtime_feedback_quiet(void) {
     pthread_mutex_lock(&wantLock); wantAt[0] = wantAt[1] = 0; pthread_mutex_unlock(&wantLock);
+    ds_rumble_quiet();
 }
 static float intensity_of(const float v[4]) {
     float a = sqrtf(v[0] * v[0] + v[2] * v[2]) * gain;
@@ -361,7 +375,8 @@ static BOOL hid_rumble_active(void) { return NO; }
 #endif
 static void rumble_tick(void) {   /* rumbleQueue, every 10 ms */
     uint64_t now = runtime_now_ns();
-    for (int side = 0; side < 2 && !hid_rumble_active(); side++) {
+    ds_rumble_tick();
+    for (int side = 0; side < 2 && !hid_rumble_active() && !ds_rumble_active(); side++) {
         float v[4]; uint64_t at;
         pthread_mutex_lock(&wantLock); memcpy(v, want[side], sizeof v); at = wantAt[side]; pthread_mutex_unlock(&wantLock);
         float intensity = at && now - at < RUMBLE_STALE_MS * 1000000ull ? intensity_of(v) : 0, sharpness = sharpness_of(v);
@@ -403,7 +418,7 @@ static void rumble_tick(void) {   /* rumbleQueue, every 10 ms */
         pthread_mutex_lock(&wantLock); uint64_t n = wantCount - wantCountLogged; float peak = strongest; wantCountLogged = wantCount; strongest = 0; pthread_mutex_unlock(&wantLock);
         for (int side = 0; side < 2; side++) if (playing[side]) { playedNs[side] += now - playingSince[side]; playingSince[side] = now; }
         if (n) fprintf(stderr, "[rumble] last 30 s: %llu values from the game, strongest amplitude %.2f, played left %.1f s / right %.1f s%s\n",
-                       (unsigned long long)n, peak, playedNs[0] / 1e9, playedNs[1] / 1e9, hid_rumble_active() ? " (HID)" : rumblePad.haptics ? "" : " (no controller with haptics)");
+                       (unsigned long long)n, peak, playedNs[0] / 1e9, playedNs[1] / 1e9, hid_rumble_active() ? " (HID)" : ds_rumble_active() ? " (DualSense audio)" : rumblePad.haptics ? "" : " (no controller with haptics)");
         playedNs[0] = playedNs[1] = 0; lastLog = now;
     }
 }
